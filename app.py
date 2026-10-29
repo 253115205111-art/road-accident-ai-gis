@@ -60,8 +60,11 @@ def create_map():
         icon=folium.Icon(color="blue")
     ).add_to(m)
 
-    return m.get_root().render()
-
+    return f"""
+<div style="width:100%; height:450px;">
+    {m.get_root().render()}
+</div>
+"""
 
 def dashboard():
     try:
