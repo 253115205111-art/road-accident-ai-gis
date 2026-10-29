@@ -1,222 +1,192 @@
 
-import os
-import html
-import pandas as pd
 import gradio as gr
+import pandas as pd
 import folium
+import html
+import os
 
 DATA_URL = (
     "https://zenodo.org/records/16946653/files/"
     "ETP_4_New_Data_Accidents.csv?download=1"
 )
 
-SAMPLE_LAT = 13.04354054
-SAMPLE_LON = 80.25095281
-
-
 def load_blackspots():
-    df = pd.read_csv(DATA_URL)
+    try:
+        df = pd.read_csv(DATA_URL)
 
-    spots = (
-        df.groupby([
-            "Accident_Location_A",
-            "Accident_Location_A_Chainage_km"
-        ])
-        .size()
-        .reset_index(name="Accident_Count")
-        .sort_values("Accident_Count", ascending=False)
-        .head(15)
-    )
+        result = (
+            df.groupby([
+                "Accident_Location_A",
+                "Accident_Location_A_Chainage_km"
+            ])
+            .size()
+            .reset_index(name="Accident_Count")
+            .sort_values("Accident_Count", ascending=False)
+            .head(15)
+        )
 
-    spots["Location_Type"] = spots[
-        "Accident_Location_A"
-    ].map({1: "Urban", 2: "Rural"})
+        result["Area_Type"] = result[
+            "Accident_Location_A"
+        ].map({1: "Urban", 2: "Rural"})
 
-    spots["Chainage_km"] = spots[
-        "Accident_Location_A_Chainage_km"
-    ].round(2)
+        return result[[
+            "Area_Type",
+            "Accident_Location_A_Chainage_km",
+            "Accident_Count"
+        ]].rename(columns={
+            "Accident_Location_A_Chainage_km": "Chainage_km"
+        })
 
-    return spots[[
-        "Location_Type",
-        "Chainage_km",
-        "Accident_Count"
-    ]]
+    except Exception:
+        return pd.DataFrame({
+            "Status": [
+                "Dataset unavailable. Please refresh and try again."
+            ]
+        })
 
 
-def make_map(records=None):
+def create_map(lat=None, lon=None, location="User Point",
+               details=""):
     m = folium.Map(
-        location=[SAMPLE_LAT, SAMPLE_LON],
+        location=[13.04354054, 80.25095281],
         zoom_start=13
     )
 
     folium.Marker(
-        [SAMPLE_LAT, SAMPLE_LON],
-        tooltip="Teynampet Sample Point",
-        popup=(
-            "Sample testing point — "
-            "NOT a verified accident location."
-        ),
+        [13.04354054, 80.25095281],
+        popup="Teynampet sample point - not verified accident data",
+        tooltip="Sample Point",
         icon=folium.Icon(color="blue")
     ).add_to(m)
 
-    if records is not None:
-        for _, row in records.iterrows():
-            lat = float(row["latitude"])
-            lon = float(row["longitude"])
+    if lat is not None and lon is not None:
+        popup_text = (
+            f"Location: {html.escape(str(location))}<br>"
+            f"Details: {html.escape(str(details))}<br>"
+            "User-entered GPS point; accident status unverified"
+        )
 
-            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-                continue
+        folium.Marker(
+            [lat, lon],
+            popup=folium.Popup(popup_text, max_width=300),
+            tooltip="Entered GPS Point",
+            icon=folium.Icon(color="red")
+        ).add_to(m)
 
-            location = str(row.get("location", "Uploaded GPS point"))
-            details = str(row.get("details", "No details supplied"))
+        m.location = [lat, lon]
+        m.zoom_start = 15
 
-            popup = (
-                f"<b>{html.escape(location)}</b><br>"
-                f"{html.escape(details)}<br>"
-                "<b>Uploaded record — verify source.</b>"
-            )
-
-            folium.Marker(
-                [lat, lon],
-                tooltip=location,
-                popup=popup,
-                icon=folium.Icon(color="red")
-            ).add_to(m)
-
-        if not records.empty:
-            coords = [
-                [float(r["latitude"]), float(r["longitude"])]
-                for _, r in records.iterrows()
-                if -90 <= float(r["latitude"]) <= 90
-                and -180 <= float(r["longitude"]) <= 180
-            ]
-            if coords:
-                m.fit_bounds(coords)
-
-    map_html = m.get_root().render()
-
-    return (
-        '<iframe srcdoc="' +
-        html.escape(map_html, quote=True) +
-        '" width="100%" height="450" '
-        'style="border:0;border-radius:10px;"></iframe>'
-    )
+    return m.get_root().render()
 
 
-def dashboard():
+def show_map(latitude, longitude, location, details):
     try:
-        spots = load_blackspots()
-        return (
-            make_map(),
-            spots,
-            "Dataset loaded. Highway rows are candidates, not GPS pins."
-        )
-    except Exception as e:
-        return make_map(), pd.DataFrame(), (
-            "Dataset loading failed: " + str(e)
-        )
+        if latitude is None or longitude is None:
+            raise ValueError("Enter both latitude and longitude.")
+
+        lat = float(latitude)
+        lon = float(longitude)
+
+        if not (-90 <= lat <= 90):
+            raise ValueError("Latitude must be between -90 and 90.")
+
+        if not (-180 <= lon <= 180):
+            raise ValueError("Longitude must be between -180 and 180.")
+
+        map_html = create_map(lat, lon, location, details)
+        safe_html = html.escape(map_html, quote=True)
+
+        iframe = f"""
+        <iframe
+            srcdoc="{safe_html}"
+            width="100%"
+            height="500"
+            style="border:0;border-radius:10px;"
+            loading="lazy">
+        </iframe>
+        """
+
+        return iframe, f"GPS point added: {lat}, {lon}"
+
+    except (ValueError, TypeError) as error:
+        map_html = create_map()
+        safe_html = html.escape(map_html, quote=True)
+
+        iframe = f"""
+        <iframe srcdoc="{safe_html}"
+            width="100%" height="500"
+            style="border:0;border-radius:10px;">
+        </iframe>
+        """
+
+        return iframe, f"Error: {error}"
 
 
-def upload_gps(file):
-    if file is None:
-        return make_map(), pd.DataFrame(), "Upload a CSV file first."
+def initial_map():
+    map_html = create_map()
+    safe_html = html.escape(map_html, quote=True)
 
-    try:
-        records = pd.read_csv(file.name)
-
-        required = {"latitude", "longitude"}
-        if not required.issubset(records.columns):
-            return (
-                make_map(),
-                pd.DataFrame(),
-                "CSV needs latitude and longitude columns."
-            )
-
-        records["latitude"] = pd.to_numeric(
-            records["latitude"], errors="coerce"
-        )
-        records["longitude"] = pd.to_numeric(
-            records["longitude"], errors="coerce"
-        )
-
-        records = records.dropna(
-            subset=["latitude", "longitude"]
-        )
-
-        records = records[
-            records["latitude"].between(-90, 90)
-            & records["longitude"].between(-180, 180)
-        ]
-
-        if records.empty:
-            return (
-                make_map(),
-                pd.DataFrame(),
-                "No valid GPS coordinates found in this file."
-            )
-
-        return (
-            make_map(records),
-            records,
-            f"Loaded {len(records)} GPS records. Verify their source "
-            "before treating them as confirmed accidents."
-        )
-
-    except Exception as e:
-        return make_map(), pd.DataFrame(), "Upload failed: " + str(e)
+    return f"""
+    <iframe srcdoc="{safe_html}"
+        width="100%" height="500"
+        style="border:0;border-radius:10px;">
+    </iframe>
+    """
 
 
 with gr.Blocks(title="Road Accident AI & GIS") as app:
-    gr.Markdown("# Road Accident AI & GIS")
-
     gr.Markdown(
-        "## Teynampet, Chennai — Sample Map\n"
-        "🔵 Blue pin = sample only, not a verified accident."
+        "# 🚦 Road Accident Black Spot Detection"
     )
-
-    map_output = gr.HTML()
-
-    gr.Markdown("## Upload Accident GPS Data")
     gr.Markdown(
-        "Upload a CSV with latitude and longitude columns. "
-        "Optional columns: location, details. "
-        "Uploaded records are not automatically verified."
+        "AI and GIS-based framework for exploring "
+        "accident data and user-entered GPS points."
     )
 
-    gps_file = gr.File(
-        label="Choose GPS CSV",
-        file_types=[".csv"],
-        type="filepath"
-    )
-    upload_button = gr.Button("Show GPS Points on Map")
+    gr.Markdown("## 📍 Enter GPS Coordinates")
 
-    gps_table = gr.Dataframe(
-        label="Uploaded GPS Records",
+    with gr.Row():
+        latitude = gr.Number(
+            label="Latitude",
+            value=13.04354054
+        )
+        longitude = gr.Number(
+            label="Longitude",
+            value=80.25095281
+        )
+
+    location = gr.Textbox(
+        label="Location Name",
+        value="Teynampet"
+    )
+    details = gr.Textbox(
+        label="Additional Details",
+        placeholder="Enter notes (optional)"
+    )
+
+    show_button = gr.Button(
+        "Show GPS Point on Map",
+        variant="primary"
+    )
+
+    status = gr.Markdown()
+    map_output = gr.HTML(value=initial_map())
+
+    show_button.click(
+        fn=show_map,
+        inputs=[latitude, longitude, location, details],
+        outputs=[map_output, status]
+    )
+
+    gr.Markdown("## 📊 Top 15 Black-Spot Candidates")
+    gr.Markdown(
+        "Ranked by accident-record counts in the source dataset. "
+        "These are candidates, not independently verified black spots."
+    )
+
+    table = gr.Dataframe(
+        value=load_blackspots(),
         interactive=False
     )
-    status = gr.Textbox(label="Status")
 
-    upload_button.click(
-        fn=upload_gps,
-        inputs=[gps_file],
-        outputs=[map_output, gps_table, status]
-    )
-
-    gr.Markdown("## Top 15 Highway Black-Spot Candidates")
-    gr.Markdown(
-        "Ranked by dataset counts. These do not have GPS coordinates "
-        "and are not shown as map pins."
-    )
-
-    spots_table = gr.Dataframe(interactive=False)
-
-    app.load(
-        fn=dashboard,
-        inputs=[],
-        outputs=[map_output, spots_table, status]
-    )
-
-app.launch(
-    server_name="0.0.0.0",
-    server_port=int(os.environ.get("PORT", "10000"))
-)
+app.launch()
