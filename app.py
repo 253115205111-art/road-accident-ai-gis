@@ -1,85 +1,58 @@
 
 import gradio as gr
-import pandas as pd
 import folium
 import html
-import os
+import pandas as pd
 
-DATA_URL = (
-    "https://zenodo.org/records/16946653/files/"
-    "ETP_4_New_Data_Accidents.csv?download=1"
-)
+LAT = 13.04354054
+LON = 80.25095281
 
-def load_blackspots():
-    try:
-        df = pd.read_csv(DATA_URL)
+# Previously extracted dataset counts.
+# These are candidates, not verified GPS black spots.
+DATA = [
+    ["Rural", 400.575, 34],
+    ["Urban", 499.250, 32],
+    ["Rural", 230.200, 22],
+    ["Rural", 465.500, 22],
+    ["Rural", 152.400, 20],
+    ["Rural", 189.600, 18],
+    ["Urban", 496.500, 18],
+    ["Rural", 228.600, 18],
+    ["Rural", 231.000, 16],
+    ["Urban", 497.750, 16],
+    ["Rural", 226.000, 16],
+    ["Urban", 499.100, 16],
+    ["Rural", 242.200, 14],
+    ["Rural", 187.500, 14],
+    ["Rural", 228.000, 14],
+]
 
-        result = (
-            df.groupby([
-                "Accident_Location_A",
-                "Accident_Location_A_Chainage_km"
-            ])
-            .size()
-            .reset_index(name="Accident_Count")
-            .sort_values("Accident_Count", ascending=False)
-            .head(15)
-        )
-
-        result["Area_Type"] = result[
-            "Accident_Location_A"
-        ].map({1: "Urban", 2: "Rural"})
-
-        return result[[
-            "Area_Type",
-            "Accident_Location_A_Chainage_km",
-            "Accident_Count"
-        ]].rename(columns={
-            "Accident_Location_A_Chainage_km": "Chainage_km"
-        })
-
-    except Exception:
-        return pd.DataFrame({
-            "Status": [
-                "Dataset unavailable. Please refresh and try again."
-            ]
-        })
-
-
-def create_map(lat=None, lon=None, location="User Point",
-               details=""):
-    m = folium.Map(
-        location=[13.04354054, 80.25095281],
-        zoom_start=13
-    )
+def make_map(lat=None, lon=None, name="GPS Point", notes=""):
+    m = folium.Map(location=[LAT, LON], zoom_start=12)
 
     folium.Marker(
-        [13.04354054, 80.25095281],
-        popup="Teynampet sample point - not verified accident data",
-        tooltip="Sample Point",
+        [LAT, LON],
+        tooltip="Sample point - not a verified accident",
         icon=folium.Icon(color="blue")
     ).add_to(m)
 
     if lat is not None and lon is not None:
-        popup_text = (
-            f"Location: {html.escape(str(location))}<br>"
-            f"Details: {html.escape(str(details))}<br>"
-            "User-entered GPS point; accident status unverified"
-        )
-
         folium.Marker(
             [lat, lon],
-            popup=folium.Popup(popup_text, max_width=300),
-            tooltip="Entered GPS Point",
+            tooltip=str(name),
+            popup=(
+                html.escape(str(name)) + "<br>" +
+                html.escape(str(notes)) +
+                "<br>Accident status not verified"
+            ),
             icon=folium.Icon(color="red")
         ).add_to(m)
-
         m.location = [lat, lon]
         m.zoom_start = 15
 
     return m.get_root().render()
 
-
-def show_map(latitude, longitude, location, details):
+def show_map(latitude, longitude, name, notes):
     try:
         if latitude is None or longitude is None:
             raise ValueError("Enter both latitude and longitude.")
@@ -87,106 +60,66 @@ def show_map(latitude, longitude, location, details):
         lat = float(latitude)
         lon = float(longitude)
 
-        if not (-90 <= lat <= 90):
+        if not -90 <= lat <= 90:
             raise ValueError("Latitude must be between -90 and 90.")
-
-        if not (-180 <= lon <= 180):
+        if not -180 <= lon <= 180:
             raise ValueError("Longitude must be between -180 and 180.")
 
-        map_html = create_map(lat, lon, location, details)
-        safe_html = html.escape(map_html, quote=True)
+        message = f"GPS point added: {lat}, {lon}"
+        map_html = make_map(lat, lon, name or "GPS Point", notes or "")
+    except (ValueError, TypeError) as e:
+        message = f"Error: {e}"
+        map_html = make_map()
 
-        iframe = f"""
-        <iframe
-            srcdoc="{safe_html}"
-            width="100%"
-            height="500"
-            style="border:0;border-radius:10px;"
-            loading="lazy">
-        </iframe>
-        """
-
-        return iframe, f"GPS point added: {lat}, {lon}"
-
-    except (ValueError, TypeError) as error:
-        map_html = create_map()
-        safe_html = html.escape(map_html, quote=True)
-
-        iframe = f"""
-        <iframe srcdoc="{safe_html}"
-            width="100%" height="500"
-            style="border:0;border-radius:10px;">
-        </iframe>
-        """
-
-        return iframe, f"Error: {error}"
-
+    safe = html.escape(map_html, quote=True)
+    frame = (
+        '<iframe srcdoc="' + safe +
+        '" width="100%" height="500" '
+        'style="border:0;border-radius:10px"></iframe>'
+    )
+    return frame, message
 
 def initial_map():
-    map_html = create_map()
-    safe_html = html.escape(map_html, quote=True)
-
-    return f"""
-    <iframe srcdoc="{safe_html}"
-        width="100%" height="500"
-        style="border:0;border-radius:10px;">
-    </iframe>
-    """
-
-
-with gr.Blocks(title="Road Accident AI & GIS") as app:
-    gr.Markdown(
-        "# 🚦 Road Accident Black Spot Detection"
-    )
-    gr.Markdown(
-        "AI and GIS-based framework for exploring "
-        "accident data and user-entered GPS points."
+    safe = html.escape(make_map(), quote=True)
+    return (
+        '<iframe srcdoc="' + safe +
+        '" width="100%" height="500" '
+        'style="border:0;border-radius:10px"></iframe>'
     )
 
-    gr.Markdown("## 📍 Enter GPS Coordinates")
+table = pd.DataFrame(
+    DATA,
+    columns=["Area Type", "Chainage (km)", "Accident Records"]
+)
+
+with gr.Blocks(title="Road Accident AI and GIS") as app:
+    gr.Markdown("# Road Accident Black Spot Detection")
+    gr.Markdown(
+        "Explore sample GIS points and accident-count candidates. "
+        "Blue = sample point; red = entered GPS point."
+    )
 
     with gr.Row():
-        latitude = gr.Number(
-            label="Latitude",
-            value=13.04354054
-        )
-        longitude = gr.Number(
-            label="Longitude",
-            value=80.25095281
-        )
+        latitude = gr.Number(label="Latitude", value=LAT)
+        longitude = gr.Number(label="Longitude", value=LON)
 
-    location = gr.Textbox(
-        label="Location Name",
-        value="Teynampet"
-    )
-    details = gr.Textbox(
-        label="Additional Details",
-        placeholder="Enter notes (optional)"
-    )
-
-    show_button = gr.Button(
-        "Show GPS Point on Map",
-        variant="primary"
-    )
-
+    name = gr.Textbox(label="Location Name", value="My GPS Point")
+    notes = gr.Textbox(label="Notes (optional)")
+    button = gr.Button("Show GPS Point on Map", variant="primary")
     status = gr.Markdown()
-    map_output = gr.HTML(value=initial_map())
+    map_view = gr.HTML(value=initial_map())
 
-    show_button.click(
-        fn=show_map,
-        inputs=[latitude, longitude, location, details],
-        outputs=[map_output, status]
+    button.click(
+        show_map,
+        inputs=[latitude, longitude, name, notes],
+        outputs=[map_view, status]
     )
 
-    gr.Markdown("## 📊 Top 15 Black-Spot Candidates")
+    gr.Markdown("## Top 15 Black-Spot Candidates")
     gr.Markdown(
-        "Ranked by accident-record counts in the source dataset. "
-        "These are candidates, not independently verified black spots."
+        "Counts are from previously extracted dataset records. "
+        "Chainage is not GPS latitude/longitude."
     )
-
-    table = gr.Dataframe(
-        value=load_blackspots(),
-        interactive=False
-    )
+    gr.Dataframe(value=table, interactive=False)
 
 app.launch()
