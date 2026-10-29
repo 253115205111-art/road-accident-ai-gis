@@ -43,6 +43,7 @@ def load_blackspots():
     ]]
 
 
+
 def create_map():
     m = folium.Map(
         location=[SAMPLE_LAT, SAMPLE_LON],
@@ -60,12 +61,18 @@ def create_map():
         icon=folium.Icon(color="blue")
     ).add_to(m)
 
-    return f"""
-<div style="width:100%; height:450px;">
-    {m.get_root().render()}
-</div>
-"""
+    map_html = m.get_root().render()
 
+    return f"""
+    <iframe
+        srcdoc="{map_html.replace('&', '&amp;').replace('"', '&quot;')}"
+        width="100%"
+        height="450"
+        style="border:0; border-radius:10px;"
+        loading="lazy">
+    </iframe>
+    """
+    
 def dashboard():
     try:
         spots = load_blackspots()
