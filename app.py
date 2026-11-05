@@ -1,125 +1,107 @@
 
 import gradio as gr
-import folium
-import html
-import pandas as pd
+import requests
+import os
 
-LAT = 13.04354054
-LON = 80.25095281
-
-# Previously extracted dataset counts.
-# These are candidates, not verified GPS black spots.
-DATA = [
-    ["Rural", 400.575, 34],
-    ["Urban", 499.250, 32],
-    ["Rural", 230.200, 22],
-    ["Rural", 465.500, 22],
-    ["Rural", 152.400, 20],
-    ["Rural", 189.600, 18],
-    ["Urban", 496.500, 18],
-    ["Rural", 228.600, 18],
-    ["Rural", 231.000, 16],
-    ["Urban", 497.750, 16],
-    ["Rural", 226.000, 16],
-    ["Urban", 499.100, 16],
-    ["Rural", 242.200, 14],
-    ["Rural", 187.500, 14],
-    ["Rural", 228.000, 14],
-]
-
-def make_map(lat=None, lon=None, name="GPS Point", notes=""):
-    m = folium.Map(location=[LAT, LON], zoom_start=12)
-
-    folium.Marker(
-        [LAT, LON],
-        tooltip="Sample point - not a verified accident",
-        icon=folium.Icon(color="blue")
-    ).add_to(m)
-
-    if lat is not None and lon is not None:
-        folium.Marker(
-            [lat, lon],
-            tooltip=str(name),
-            popup=(
-                html.escape(str(name)) + "<br>" +
-                html.escape(str(notes)) +
-                "<br>Accident status not verified"
-            ),
-            icon=folium.Icon(color="red")
-        ).add_to(m)
-        m.location = [lat, lon]
-        m.zoom_start = 15
-
-    return m.get_root().render()
-
-def show_map(latitude, longitude, name, notes):
+def get_location(latitude, longitude):
     try:
         if latitude is None or longitude is None:
-            raise ValueError("Enter both latitude and longitude.")
+            return "Please enter both coordinates."
 
         lat = float(latitude)
         lon = float(longitude)
 
-        if not -90 <= lat <= 90:
-            raise ValueError("Latitude must be between -90 and 90.")
-        if not -180 <= lon <= 180:
-            raise ValueError("Longitude must be between -180 and 180.")
+        if not (-90 <= lat <= 90):
+            return "Invalid latitude. Enter between -90 and 90."
 
-        message = f"GPS point added: {lat}, {lon}"
-        map_html = make_map(lat, lon, name or "GPS Point", notes or "")
-    except (ValueError, TypeError) as e:
-        message = f"Error: {e}"
-        map_html = make_map()
+        if not (-180 <= lon <= 180):
+            return "Invalid longitude. Enter between -180 and 180."
 
-    safe = html.escape(map_html, quote=True)
-    frame = (
-        '<iframe srcdoc="' + safe +
-        '" width="100%" height="500" '
-        'style="border:0;border-radius:10px"></iframe>'
-    )
-    return frame, message
+        url = "https://nominatim.openstreetmap.org/reverse"
 
-def initial_map():
-    safe = html.escape(make_map(), quote=True)
-    return (
-        '<iframe srcdoc="' + safe +
-        '" width="100%" height="500" '
-        'style="border:0;border-radius:10px"></iframe>'
-    )
+        response = requests.get(
+            url,
+            params={
+                "lat": lat,
+                "lon": lon,
+                "format": "jsonv2"
+            },
+            headers={
+                "User-Agent": "RoadAccidentGISCollegeProject/1.0"
+            },
+            timeout=15
+        )
 
-table = pd.DataFrame(
-    DATA,
-    columns=["Area Type", "Chainage (km)", "Accident Records"]
-)
+        response.raise_for_status()
+        data = response.json()
 
-with gr.Blocks(title="Road Accident AI and GIS") as app:
-    gr.Markdown("# Road Accident Black Spot Detection")
+        if "error" in data:
+            return "Location not found. Check the coordinates."
+
+        address = data.get("address", {})
+
+        return f"""
+### 📍 Location Found
+
+**Full Address:**  
+{data.get('display_name', 'Not available')}
+
+**Area:** {address.get('suburb', address.get('neighbourhood', 'Not available'))}
+
+**City:** {address.get('city', address.get('town', address.get('village', 'Not available')))}
+
+**District:** {address.get('state_district', 'Not available')}
+
+**State:** {address.get('state', 'Not available')}
+
+**Country:** {address.get('country', 'Not available')}
+
+**Latitude:** {lat}
+
+**Longitude:** {lon}
+"""
+
+    except requests.exceptions.Timeout:
+        return "Request timed out. Please try again."
+
+    except requests.exceptions.RequestException:
+        return "Unable to connect to location service. Try again later."
+
+    except Exception as e:
+        return f"Error: {e}"
+
+
+with gr.Blocks(title="GPS Location Finder") as app:
+
+    gr.Markdown("# 📍 GPS Location Finder")
     gr.Markdown(
-        "Explore sample GIS points and accident-count candidates. "
-        "Blue = sample point; red = entered GPS point."
+        "Enter latitude and longitude to find the location address."
     )
 
-    with gr.Row():
-        latitude = gr.Number(label="Latitude", value=LAT)
-        longitude = gr.Number(label="Longitude", value=LON)
+    latitude = gr.Number(
+        label="Enter Latitude",
+        placeholder="Example: 13.04354"
+    )
 
-    name = gr.Textbox(label="Location Name", value="My GPS Point")
-    notes = gr.Textbox(label="Notes (optional)")
-    button = gr.Button("Show GPS Point on Map", variant="primary")
-    status = gr.Markdown()
-    map_view = gr.HTML(value=initial_map())
+    longitude = gr.Number(
+        label="Enter Longitude",
+        placeholder="Example: 80.25095"
+    )
+
+    button = gr.Button(
+        "Find My Location",
+        variant="primary"
+    )
+
+    result = gr.Markdown()
 
     button.click(
-        show_map,
-        inputs=[latitude, longitude, name, notes],
-        outputs=[map_view, status]
+        fn=get_location,
+        inputs=[latitude, longitude],
+        outputs=result
     )
 
-    gr.Markdown("## Top 15 Black-Spot Candidates")
-    gr.Markdown(
-        "Counts are from previously extracted dataset records. "
-        "Chainage is not GPS latitude/longitude."
-    )
-    gr.Dataframe(value=table, interactive=False)
-
-app.launch()
+app.launch(
+    server_name="0.0.0.0",
+    server_port=int(os.environ.get("PORT", 7860))
+)
